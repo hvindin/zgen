@@ -9,7 +9,7 @@ local ZGEN_SOURCE="$0:A:h"
 
 
 if [[ -z "${ZGEN_DIR}" ]]; then
-    ZGEN_DIR="${HOME}/.zgen"
+    ZGEN_DIR="${ZDOTDIR:-$HOME}/.zgen"
 fi
 
 if [[ -z "${ZGEN_INIT}" ]]; then
@@ -50,6 +50,10 @@ fi
 
 if [[ -z "${ZGEN_PREZTO_LOAD_DEFAULT}" ]]; then
     ZGEN_PREZTO_LOAD_DEFAULT=1
+fi
+
+if [[ -z "${ZGEN_USE_OH_MY_ZSH}" ]]; then
+    ZGEN_USE_OH_MY_ZSH=0
 fi
 
 if [[ -z "${ZGEN_OH_MY_ZSH_REPO}" ]]; then
@@ -218,7 +222,7 @@ zgen-update() {
         -zgpute "Updating '${repo}' ..."
         (cd "${repo}" \
             && git pull \
-            && git submodule update --recursive)
+            && git submodule update --init --recursive)
     done
     zgen-reset
 }
@@ -262,9 +266,24 @@ zgen-save() {
         -zginit ""
         -zginit "# ### Recompilation triggers"
 
-        local ages="$(stat -Lc "%Y" 2>/dev/null $ZGEN_RESET_ON_CHANGE || \
-                      stat -Lf "%m" 2>/dev/null $ZGEN_RESET_ON_CHANGE)"
-        local shas="$(shasum -a 256 ${ZGEN_RESET_ON_CHANGE})"
+        local ages="$(stat -Lc "%Y" $ZGEN_RESET_ON_CHANGE || stat -Lf "%m" $ZGEN_RESET_ON_CHANGE)"
+        if hash sha256sum &> /dev/null; then
+          local shas="$(sha256sum ${ZGEN_RESET_ON_CHANGE})"
+        elif hash shasum &> /dev/null; then
+          local shas="$(shasum -a 256 ${ZGEN_RESET_ON_CHANGE})"
+        elif hash python &> /dev/null; then
+          local shas="$(printf '%s  %s\n' "$(python -c "from hashlib import sha256; import sys; print '%s' % (sha256(sys.stdin.read()).hexdigest())" <"${ZGEN_RESET_ON_CHANGE}")" "${ZGEN_RESET_ON_CHANGE}")"
+        elif hash openssl &> /dev/null; then
+          if type sed &> /dev/null; then
+            local shas="$(openssl sha -sha256 -r ${ZGEN_RESET_ON_CHANGE} | sed -e 's#*##g')"
+          else
+            printf '[\e[31;1mERROR\e[0m] For some reason there doesn''t seem to be any tool capable of sha256 summing files on this machine!.'
+            exit 1
+          fi
+        else
+          printf '[\e[31;1mERROR\e[0m] For some reason there doesn''t seem to be any tool capable of sha256 summing files on this machine!.'
+          exit 1
+        fi
 
         -zginit "read -rd '' ages <<AGES; read -rd '' shas <<SHAS"
         -zginit "$ages"
@@ -275,7 +294,23 @@ zgen-save() {
         -zginit 'if [[ -n "$ZGEN_RESET_ON_CHANGE" \'
         -zginit '   && "$(stat -Lc "%Y" 2>/dev/null $ZGEN_RESET_ON_CHANGE || \'
         -zginit '         stat -Lf "%m"             $ZGEN_RESET_ON_CHANGE)" != "$ages" \'
-        -zginit '   && "$(shasum -a 256             $ZGEN_RESET_ON_CHANGE)" != "$shas" ]]; then'
+        if hash sha256sum &> /dev/null; then
+          -zginit '   && "$(sha256sum ${ZGEN_RESET_ON_CHANGE})" != "${shas}" ]]; then '
+        elif hash shasum &> /dev/null; then
+          -zginit '   && "$(shasum -a 256 ${ZGEN_RESET_ON_CHANGE})" != "${shas}" ]]; then '
+        elif hash python &> /dev/null; then
+          -zginit '   && "$(printf '%s  %s\n' "$(python -c "from hashlib import sha256; import sys; print '%s' % (sha256(sys.stdin.read()).hexdigest())" <"${ZGEN_RESET_ON_CHANGE}")" "${ZGEN_RESET_ON_CHANGE}")" != "${shas}" ]]; then '
+        elif hash openssl &> /dev/null; then
+          if type sed &> /dev/null; then
+            -zginit '   && "$(openssl sha -sha256 -r             ${ZGEN_RESET_ON_CHANGE} | sed -e 's#*##g')" != "${shas}" ]]; then '
+          else
+            printf '[\e[31;1mERROR\e[0m] For some reason there doesn''t seem to be any tool capable of sha256 summing files on this machine!.'
+            exit 1
+          fi
+        else
+          printf '[\e[31;1mERROR\e[0m] For some reason there doesn''t seem to be any tool capable of sha256 summing files on this machine!.'
+          exit 1
+        fi
         -zginit '   printf %s\\n '\''-- zgen: Files in $ZGEN_RESET_ON_CHANGE changed; resetting `init.zsh`...'\'
         -zginit '   zgen reset'
         -zginit 'fi'
@@ -314,10 +349,10 @@ zgen-apply() {
 }
 
 -zgen-get-zsh(){
-    if [[ ${ZGEN_USE_PREZTO} == 1 ]]; then
-        -zgputs "$(-zgen-get-clone-dir "$ZGEN_PREZTO_REPO" "$ZGEN_PREZTO_BRANCH")"
-    else
+    if [[ ${ZGEN_USE_OH_MY_ZSH} == 1 ]]; then
         -zgputs "$(-zgen-get-clone-dir "$ZGEN_OH_MY_ZSH_REPO" "$ZGEN_OH_MY_ZSH_BRANCH")"
+    elif [[ ${ZGEN_USE_PREZTO} == 1 ]]; then
+        -zgputs "$(-zgen-get-clone-dir "$ZGEN_PREZTO_REPO" "$ZGEN_PREZTO_BRANCH")"
     fi
 }
 
@@ -427,6 +462,8 @@ zgen-selfupdate() {
 zgen-oh-my-zsh() {
     local repo="$ZGEN_OH_MY_ZSH_REPO"
     local file="${1:-oh-my-zsh.sh}"
+
+    ZGEN_USE_OH_MY_ZSH=1
 
     zgen-load "${repo}" "${file}"
 }
